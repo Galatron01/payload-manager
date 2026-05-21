@@ -10,25 +10,48 @@ os.makedirs(PAYLOADS_DIR, exist_ok=True)
 
 DEFAULT_TYPES = ["Web Test", "External Network", "Internal", "API"]
 
+CSS = """
+/* ── Layout ── */
+.sidebar        { background-color: alpha(@card_bg_color, 0.5); }
+.cat-row        { padding: 7px 14px; font-size: 0.95em; }
+.cat-hint       { padding: 0 12px; font-size: 0.72em; opacity: 0.55; }
+.payload-row    { padding: 6px 12px; font-family: monospace; font-size: 0.88em; }
+.section-label  { padding: 4px 6px; font-size: 0.78em; font-weight: bold;
+                  letter-spacing: 0.08em; opacity: 0.6; }
+.status-bar     { padding: 4px 10px; font-size: 0.85em; opacity: 0.75; }
+.copied         { color: #2ec27e; opacity: 1; }
+
+/* ── Test type chips ── */
+.tt-chip        { border-radius: 99px; padding: 3px 14px;
+                  background: alpha(@card_bg_color, 0.6); font-size: 0.85em; }
+.tt-chip:hover  { background: alpha(@accent_bg_color, 0.25); }
+.tt-chip:checked { background: @accent_bg_color; color: @accent_fg_color; }
+
+/* ── Coloured buttons ── */
+.btn-add        { background: #2ec27e; color: white; font-weight: bold; }
+.btn-add:hover  { background: #26a96c; }
+.btn-del        { background: #e01b24; color: white; font-weight: bold; }
+.btn-del:hover  { background: #c0161e; }
+.btn-import     { background: #1c71d8; color: white; font-weight: bold; }
+.btn-import:hover { background: #1660c0; }
+.btn-export     { background: #e5a50a; color: white; font-weight: bold; }
+.btn-export:hover { background: #c88e08; }
+.btn-manage     { font-size: 0.8em; opacity: 0.75; }
+"""
+
 
 class PayloadWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Payload Manager")
-        self.set_default_size(1050, 650)
+        self.set_default_size(1100, 680)
         self.current_category = None
-        self.current_testtype = None   # None = All Types
+        self.current_testtype = None   # None = All
         self._updating_tags = False
         self.tt_data = self._load_tt_data()
+        self._tt_buttons = {}          # type_name → ToggleButton
 
         css = Gtk.CssProvider()
-        css.load_from_string("""
-            .payload-row { padding: 6px 10px; font-family: monospace; }
-            .cat-row  { padding: 6px 10px; }
-            .tt-row   { padding: 5px 10px; }
-            .cat-hint { padding: 0 10px; font-size: 0.75em; opacity: 0.6; }
-            .status   { padding: 4px 8px; opacity: 0.7; }
-            .copied   { color: #50fa7b; }
-        """)
+        css.load_from_string(CSS)
         Gtk.StyleContext.add_provider_for_display(
             self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
@@ -36,74 +59,87 @@ class PayloadWindow(Gtk.ApplicationWindow):
         root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self.set_child(root)
 
-        # ── Left panel ────────────────────────────────────────────
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        left.set_size_request(200, -1)
-        left.set_margin_start(10); left.set_margin_end(6)
-        left.set_margin_top(10);   left.set_margin_bottom(10)
+        # ── Left sidebar ──────────────────────────────────────────
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sidebar.add_css_class("sidebar")
+        sidebar.set_size_request(210, -1)
+        sidebar.set_margin_start(0); sidebar.set_margin_end(0)
+        sidebar.set_margin_top(14);  sidebar.set_margin_bottom(10)
 
-        # Test Types section
-        tt_lbl = Gtk.Label(label="Test Types", xalign=0)
-        tt_lbl.add_css_class("heading")
-        left.append(tt_lbl)
-
-        self.tt_list = Gtk.ListBox()
-        self.tt_list.connect("row-selected", self.on_testtype_selected)
-        tt_scroll = Gtk.ScrolledWindow()
-        tt_scroll.set_min_content_height(100)
-        tt_scroll.set_max_content_height(180)
-        tt_scroll.set_vexpand(False)
-        tt_scroll.set_child(self.tt_list)
-        left.append(tt_scroll)
-
-        tt_btns = Gtk.Box(spacing=6)
-        add_tt = Gtk.Button(label="+ Type")
-        add_tt.connect("clicked", self.on_add_testtype)
-        del_tt = Gtk.Button(label="Delete")
-        del_tt.connect("clicked", self.on_delete_testtype)
-        tt_btns.append(add_tt); tt_btns.append(del_tt)
-        left.append(tt_btns)
-
-        left.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-
-        # Categories section
-        cat_lbl = Gtk.Label(label="Categories", xalign=0)
-        cat_lbl.add_css_class("heading")
-        left.append(cat_lbl)
+        cat_hdr = Gtk.Label(label="CATEGORIES", xalign=0)
+        cat_hdr.add_css_class("section-label")
+        cat_hdr.set_margin_start(10)
+        sidebar.append(cat_hdr)
 
         self.cat_list = Gtk.ListBox()
         self.cat_list.set_vexpand(True)
         self.cat_list.connect("row-selected", self.on_category_selected)
         cat_scroll = Gtk.ScrolledWindow(vexpand=True)
         cat_scroll.set_child(self.cat_list)
-        left.append(cat_scroll)
+        sidebar.append(cat_scroll)
 
-        cat_btns = Gtk.Box(spacing=6)
-        add_cat = Gtk.Button(label="+ Category")
+        # Category buttons
+        cat_btns = Gtk.Box(spacing=6, homogeneous=True)
+        cat_btns.set_margin_start(8); cat_btns.set_margin_end(8)
+        cat_btns.set_margin_top(4);   cat_btns.set_margin_bottom(8)
+        add_cat = Gtk.Button(label="＋ New")
+        add_cat.add_css_class("btn-add")
         add_cat.connect("clicked", self.on_add_category)
-        del_cat = Gtk.Button(label="Delete")
+        del_cat = Gtk.Button(label="✕ Delete")
+        del_cat.add_css_class("btn-del")
         del_cat.connect("clicked", self.on_delete_category)
         cat_btns.append(add_cat); cat_btns.append(del_cat)
-        left.append(cat_btns)
+        sidebar.append(cat_btns)
 
-        root.append(left)
+        root.append(sidebar)
         root.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
 
         # ── Right panel ───────────────────────────────────────────
-        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         right.set_hexpand(True)
-        right.set_margin_start(6); right.set_margin_end(10)
-        right.set_margin_top(10);  right.set_margin_bottom(10)
+        right.set_margin_start(12); right.set_margin_end(12)
+        right.set_margin_top(12);   right.set_margin_bottom(10)
 
-        top_bar = Gtk.Box(spacing=6)
+        # Title + search row
+        top_bar = Gtk.Box(spacing=8)
+        top_bar.set_margin_bottom(8)
         self.cat_title = Gtk.Label(label="Select a category", xalign=0)
         self.cat_title.set_hexpand(True)
         self.cat_title.add_css_class("heading")
-        self.search = Gtk.SearchEntry(placeholder_text="Filter payloads...")
+        self.search = Gtk.SearchEntry(placeholder_text="Search payloads…")
+        self.search.set_size_request(220, -1)
         self.search.connect("search-changed", self.on_search)
-        top_bar.append(self.cat_title); top_bar.append(self.search)
+        top_bar.append(self.cat_title)
+        top_bar.append(self.search)
         right.append(top_bar)
 
+        # Test type chip bar
+        tt_bar_wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        tt_bar_wrap.set_margin_bottom(8)
+
+        tt_bar_hdr = Gtk.Box(spacing=6)
+        tt_type_lbl = Gtk.Label(label="FILTER BY TEST TYPE", xalign=0)
+        tt_type_lbl.add_css_class("section-label")
+        tt_type_lbl.set_hexpand(True)
+        manage_btn = Gtk.Button(label="Manage types…")
+        manage_btn.add_css_class("btn-manage")
+        manage_btn.connect("clicked", self.on_manage_testtypes)
+        tt_bar_hdr.append(tt_type_lbl)
+        tt_bar_hdr.append(manage_btn)
+        tt_bar_wrap.append(tt_bar_hdr)
+
+        self.tt_chip_bar = Gtk.Box(spacing=6)
+        self.tt_chip_bar.set_margin_top(4)
+        self._build_chip_bar()
+        tt_chip_scroll = Gtk.ScrolledWindow()
+        tt_chip_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        tt_chip_scroll.set_child(self.tt_chip_bar)
+        tt_bar_wrap.append(tt_chip_scroll)
+        right.append(tt_bar_wrap)
+
+        right.append(Gtk.Separator())
+
+        # Payload list
         self.payload_list = Gtk.ListBox()
         self.payload_list.set_vexpand(True)
         self.payload_list.set_filter_func(self.filter_payloads)
@@ -111,38 +147,58 @@ class PayloadWindow(Gtk.ApplicationWindow):
         self.payload_list.connect("row-selected",  self.on_payload_selected)
         payload_scroll = Gtk.ScrolledWindow(vexpand=True)
         payload_scroll.set_child(self.payload_list)
+        payload_scroll.set_margin_top(6)
         right.append(payload_scroll)
 
-        # Input bar
-        add_box = Gtk.Box(spacing=6)
-        self.payload_entry = Gtk.Entry(hexpand=True, placeholder_text="New payload — press Enter to add")
+        right.append(Gtk.Separator())
+
+        # Input / action bar
+        action_bar = Gtk.Box(spacing=6)
+        action_bar.set_margin_top(8)
+        self.payload_entry = Gtk.Entry(hexpand=True, placeholder_text="Type a payload and press Enter to add…")
         self.payload_entry.connect("activate", self.on_add_payload)
-        add_btn = Gtk.Button(label="Add")
-        add_btn.connect("clicked", self.on_add_payload)
-        del_btn = Gtk.Button(label="Delete selected")
-        del_btn.connect("clicked", self.on_delete_payload)
-        imp_btn = Gtk.Button(label="Import file…")
-        imp_btn.connect("clicked", self.on_import_file)
-        exp_btn = Gtk.Button(label="Export…")
-        exp_btn.connect("clicked", self.on_export_file)
-        add_box.append(self.payload_entry); add_box.append(add_btn)
-        add_box.append(del_btn); add_box.append(imp_btn); add_box.append(exp_btn)
-        right.append(add_box)
 
-        # Tag bar — checkboxes for each test type
-        self.tag_bar = Gtk.Box(spacing=8)
-        self.tag_bar_lbl = Gtk.Label(label="Assign to:", xalign=0)
-        self.tag_bar.append(self.tag_bar_lbl)
+        btn_add = Gtk.Button(label="＋ Add")
+        btn_add.add_css_class("btn-add")
+        btn_add.connect("clicked", self.on_add_payload)
+
+        btn_del = Gtk.Button(label="✕ Delete")
+        btn_del.add_css_class("btn-del")
+        btn_del.connect("clicked", self.on_delete_payload)
+
+        btn_imp = Gtk.Button(label="⬆ Import")
+        btn_imp.add_css_class("btn-import")
+        btn_imp.connect("clicked", self.on_import_file)
+
+        btn_exp = Gtk.Button(label="⬇ Export")
+        btn_exp.add_css_class("btn-export")
+        btn_exp.connect("clicked", self.on_export_file)
+
+        action_bar.append(self.payload_entry)
+        action_bar.append(btn_add)
+        action_bar.append(btn_del)
+        action_bar.append(btn_imp)
+        action_bar.append(btn_exp)
+        right.append(action_bar)
+
+        # Tag assignment bar
+        tag_bar = Gtk.Box(spacing=8)
+        tag_bar.set_margin_top(6)
+        tag_lbl = Gtk.Label(label="Assign to:", xalign=0)
+        tag_lbl.add_css_class("section-label")
+        tag_bar.append(tag_lbl)
         self.tag_toggles = {}
+        self.tag_bar_box = tag_bar
         self._rebuild_tag_bar()
-        right.append(self.tag_bar)
+        right.append(tag_bar)
 
+        # Status bar
         self.status = Gtk.Label(label="Click a payload to copy to clipboard", xalign=0)
-        self.status.add_css_class("status")
+        self.status.add_css_class("status-bar")
+        self.status.set_margin_top(2)
         right.append(self.status)
 
         root.append(right)
-        self.load_testtypes()
         self.load_categories()
 
     # ── Test type data ────────────────────────────────────────────
@@ -161,7 +217,6 @@ class PayloadWindow(Gtk.ApplicationWindow):
             json.dump(self.tt_data, f, indent=2)
 
     def _tt_key(self, category, payload):
-        # Use null byte as separator — safe since it can't appear in either field
         return f"{category}\x00{payload}"
 
     def _payload_testtypes(self, category, payload):
@@ -180,76 +235,133 @@ class PayloadWindow(Gtk.ApplicationWindow):
             del self.tt_data["assignments"][key]
         self._save_tt_data()
 
-    # ── Test types UI ─────────────────────────────────────────────
+    # ── Test type chip bar ────────────────────────────────────────
 
-    def load_testtypes(self):
-        while row := self.tt_list.get_row_at_index(0):
-            self.tt_list.remove(row)
-        for label, name in [("All Types", None)] + [(t, t) for t in self.tt_data["types"]]:
-            lbl = Gtk.Label(label=label, xalign=0)
-            lbl.add_css_class("tt-row")
-            row = Gtk.ListBoxRow()
-            row.set_child(lbl)
-            row.tt_name = name
-            self.tt_list.append(row)
-        self.tt_list.select_row(self.tt_list.get_row_at_index(0))
+    def _build_chip_bar(self):
+        while self.tt_chip_bar.get_first_child():
+            self.tt_chip_bar.remove(self.tt_chip_bar.get_first_child())
+        self._tt_buttons.clear()
 
-    def on_testtype_selected(self, listbox, row):
-        if row is None:
+        all_btn = Gtk.ToggleButton(label="All")
+        all_btn.add_css_class("tt-chip")
+        all_btn.set_active(self.current_testtype is None)
+        all_btn.connect("clicked", self._on_chip_clicked, None)
+        self.tt_chip_bar.append(all_btn)
+        self._tt_buttons[None] = all_btn
+
+        for t in self.tt_data["types"]:
+            btn = Gtk.ToggleButton(label=t)
+            btn.add_css_class("tt-chip")
+            btn.set_active(self.current_testtype == t)
+            btn.connect("clicked", self._on_chip_clicked, t)
+            self.tt_chip_bar.append(btn)
+            self._tt_buttons[t] = btn
+
+    def _on_chip_clicked(self, btn, type_name):
+        if not btn.get_active():
+            # Don't allow deselecting — always keep one active
+            btn.set_active(True)
             return
-        self.current_testtype = row.tt_name
+        self.current_testtype = type_name
+        # Deactivate all others
+        for k, b in self._tt_buttons.items():
+            if k != type_name:
+                b.set_active(False)
         self.load_payloads()
 
-    def on_add_testtype(self, btn):
-        win = Gtk.Window(transient_for=self, modal=True, title="New Test Type")
-        win.set_default_size(300, 80)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_start(12); box.set_margin_end(12)
-        box.set_margin_top(12);   box.set_margin_bottom(12)
-        entry = Gtk.Entry(placeholder_text="Test type name")
-        btn2 = Gtk.Button(label="Create")
-        box.append(entry); box.append(btn2)
-        win.set_child(box)
-        def create(w):
-            name = entry.get_text().strip()
+    def on_manage_testtypes(self, btn):
+        win = Gtk.Window(transient_for=self, modal=True, title="Manage Test Types")
+        win.set_default_size(320, 340)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        outer.set_margin_start(14); outer.set_margin_end(14)
+        outer.set_margin_top(14);   outer.set_margin_bottom(14)
+
+        outer.append(Gtk.Label(label="Test types:", xalign=0))
+
+        self._manage_list = Gtk.ListBox()
+        self._manage_list.set_vexpand(True)
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        scroll.set_child(self._manage_list)
+        outer.append(scroll)
+
+        def refresh_list():
+            while r := self._manage_list.get_row_at_index(0):
+                self._manage_list.remove(r)
+            for t in self.tt_data["types"]:
+                lbl = Gtk.Label(label=t, xalign=0)
+                lbl.set_margin_start(8); lbl.set_margin_top(5); lbl.set_margin_bottom(5)
+                row = Gtk.ListBoxRow()
+                row.set_child(lbl)
+                row.tt_name = t
+                self._manage_list.append(row)
+
+        refresh_list()
+
+        # Add row
+        add_row = Gtk.Box(spacing=6)
+        new_entry = Gtk.Entry(hexpand=True, placeholder_text="New type name…")
+        add_btn = Gtk.Button(label="＋ Add")
+        add_btn.add_css_class("btn-add")
+        add_row.append(new_entry); add_row.append(add_btn)
+        outer.append(add_row)
+
+        del_btn = Gtk.Button(label="✕ Delete selected")
+        del_btn.add_css_class("btn-del")
+        outer.append(del_btn)
+
+        close_btn = Gtk.Button(label="Done")
+        close_btn.add_css_class("suggested-action")
+        outer.append(close_btn)
+
+        win.set_child(outer)
+
+        def add_type(w):
+            name = new_entry.get_text().strip()
             if name and name not in self.tt_data["types"]:
                 self.tt_data["types"].append(name)
                 self._save_tt_data()
-                self.load_testtypes()
+                refresh_list()
+                self._build_chip_bar()
                 self._rebuild_tag_bar()
-            win.close()
-        btn2.connect("clicked", create)
-        entry.connect("activate", create)
+            new_entry.set_text("")
+
+        def del_type(w):
+            row = self._manage_list.get_selected_row()
+            if row is None or row.tt_name is None:
+                return
+            name = row.tt_name
+            self.tt_data["types"] = [t for t in self.tt_data["types"] if t != name]
+            for key in list(self.tt_data["assignments"]):
+                types = [t for t in self.tt_data["assignments"][key] if t != name]
+                if types:
+                    self.tt_data["assignments"][key] = types
+                else:
+                    del self.tt_data["assignments"][key]
+            self._save_tt_data()
+            if self.current_testtype == name:
+                self.current_testtype = None
+            refresh_list()
+            self._build_chip_bar()
+            self._rebuild_tag_bar()
+            self.load_payloads()
+
+        add_btn.connect("clicked", add_type)
+        new_entry.connect("activate", add_type)
+        del_btn.connect("clicked", del_type)
+        close_btn.connect("clicked", lambda w: win.close())
         win.present()
 
-    def on_delete_testtype(self, btn):
-        row = self.tt_list.get_selected_row()
-        if row is None or row.tt_name is None:
-            return
-        name = row.tt_name
-        self.tt_data["types"] = [t for t in self.tt_data["types"] if t != name]
-        for key in list(self.tt_data["assignments"]):
-            types = [t for t in self.tt_data["assignments"][key] if t != name]
-            if types:
-                self.tt_data["assignments"][key] = types
-            else:
-                del self.tt_data["assignments"][key]
-        self._save_tt_data()
-        if self.current_testtype == name:
-            self.current_testtype = None
-        self.load_testtypes()
-        self._rebuild_tag_bar()
-        self.load_payloads()
+    # ── Tag assignment bar ────────────────────────────────────────
 
     def _rebuild_tag_bar(self):
         for cb in self.tag_toggles.values():
-            self.tag_bar.remove(cb)
+            self.tag_bar_box.remove(cb)
         self.tag_toggles.clear()
         for t in self.tt_data["types"]:
             cb = Gtk.CheckButton(label=t)
             cb.set_sensitive(False)
             cb.connect("toggled", self._on_tag_toggled, t)
-            self.tag_bar.append(cb)
+            self.tag_bar_box.append(cb)
             self.tag_toggles[t] = cb
 
     def on_payload_selected(self, listbox, row):
@@ -302,12 +414,13 @@ class PayloadWindow(Gtk.ApplicationWindow):
 
     def on_add_category(self, btn):
         win = Gtk.Window(transient_for=self, modal=True, title="New Category")
-        win.set_default_size(300, 80)
+        win.set_default_size(300, 90)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_start(12); box.set_margin_end(12)
         box.set_margin_top(12);   box.set_margin_bottom(12)
         entry = Gtk.Entry(placeholder_text="Category name")
-        btn2 = Gtk.Button(label="Create")
+        btn2 = Gtk.Button(label="＋ Create")
+        btn2.add_css_class("btn-add")
         box.append(entry); box.append(btn2)
         win.set_child(box)
         def create(w):
@@ -327,6 +440,7 @@ class PayloadWindow(Gtk.ApplicationWindow):
         if os.path.exists(path):
             os.remove(path)
         self.current_category = None
+        self.cat_title.set_text("Select a category")
         self.load_categories()
         self.load_payloads()
 
@@ -339,7 +453,6 @@ class PayloadWindow(Gtk.ApplicationWindow):
             cb.set_sensitive(False)
 
         if self.current_category:
-            # Single category view
             path = os.path.join(PAYLOADS_DIR, f"{self.current_category}.txt")
             if os.path.exists(path):
                 with open(path) as f:
@@ -349,11 +462,10 @@ class PayloadWindow(Gtk.ApplicationWindow):
                             self._add_payload_row(line, self.current_category)
             title = self.current_category
             if self.current_testtype:
-                title = f"{self.current_testtype}  ›  {self.current_category}"
+                title = f"{self.current_category}  ·  {self.current_testtype}"
             self.cat_title.set_text(title)
 
         elif self.current_testtype:
-            # No category: show all payloads tagged with this type across all categories
             for fname in sorted(os.listdir(PAYLOADS_DIR)):
                 if not fname.endswith(".txt"):
                     continue
@@ -387,29 +499,34 @@ class PayloadWindow(Gtk.ApplicationWindow):
         self.payload_list.append(row)
 
     def _save_category_to_disk(self, category):
-        # In single-category view the list holds ALL rows for this category (GTK hides
-        # filtered rows but keeps them in the list), so we can safely reconstruct.
-        payloads = []
-        i = 0
-        while row := self.payload_list.get_row_at_index(i):
-            if getattr(row, "source_category", None) == category:
-                payloads.append(row.payload)
-            i += 1
-        path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
-        with open(path, "w") as f:
-            f.write("\n".join(payloads) + "\n")
+        if self.current_category == category:
+            payloads = []
+            i = 0
+            while row := self.payload_list.get_row_at_index(i):
+                if getattr(row, "source_category", None) == category:
+                    payloads.append(row.payload)
+                i += 1
+            path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
+            with open(path, "w") as f:
+                f.write("\n".join(payloads) + "\n")
+        else:
+            self._remove_deleted_from_disk(category)
 
-    def _delete_payload_from_file(self, category, payload_text):
-        # Used in cross-category view where the list only shows tagged payloads —
-        # read the file directly and remove one occurrence to avoid data loss.
+    def _remove_deleted_from_disk(self, category):
         path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
         if not os.path.exists(path):
             return
+        in_list = set()
+        i = 0
+        while row := self.payload_list.get_row_at_index(i):
+            if getattr(row, "source_category", None) == category:
+                in_list.add(row.payload)
+            i += 1
         with open(path) as f:
             lines = [l.strip() for l in f if l.strip()]
         try:
-            lines.remove(payload_text)
-        except ValueError:
+            lines.remove(next(p for p in lines if p not in in_list))
+        except StopIteration:
             pass
         with open(path, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -454,6 +571,19 @@ class PayloadWindow(Gtk.ApplicationWindow):
         else:
             self._delete_payload_from_file(cat, payload_text)
 
+    def _delete_payload_from_file(self, category, payload_text):
+        path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
+        if not os.path.exists(path):
+            return
+        with open(path) as f:
+            lines = [l.strip() for l in f if l.strip()]
+        try:
+            lines.remove(payload_text)
+        except ValueError:
+            pass
+        with open(path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+
     def on_search(self, entry):
         self.payload_list.invalidate_filter()
 
@@ -461,8 +591,6 @@ class PayloadWindow(Gtk.ApplicationWindow):
         query = self.search.get_text().lower()
         if query and query not in row.payload.lower():
             return False
-        # Test type filter only applies in single-category view
-        # (cross-category view pre-filters at load time)
         if self.current_testtype and self.current_category:
             cat = getattr(row, "source_category", self.current_category)
             return self.current_testtype in self._payload_testtypes(cat, row.payload)
@@ -505,12 +633,12 @@ class PayloadWindow(Gtk.ApplicationWindow):
 
     def _show_testtype_picker(self, path):
         win = Gtk.Window(transient_for=self, modal=True, title="Assign test types")
-        win.set_default_size(320, 200)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        win.set_default_size(320, 240)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_start(14); box.set_margin_end(14)
         box.set_margin_top(14);   box.set_margin_bottom(14)
 
-        lbl = Gtk.Label(label="Assign imported payloads to test types\n(optional — can be changed later):", xalign=0)
+        lbl = Gtk.Label(label="Tag imported payloads with test types\n(optional — can be changed later):", xalign=0)
         lbl.set_wrap(True)
         box.append(lbl)
 
@@ -521,22 +649,26 @@ class PayloadWindow(Gtk.ApplicationWindow):
             checks[t] = cb
 
         btn_row = Gtk.Box(spacing=8, homogeneous=True)
-        btn_skip   = Gtk.Button(label="Skip")
-        btn_import = Gtk.Button(label="Import")
+        btn_skip   = Gtk.Button(label="Skip tagging")
+        btn_import = Gtk.Button(label="⬆ Import")
+        btn_import.add_css_class("btn-import")
         btn_row.append(btn_skip); btn_row.append(btn_import)
         box.append(btn_row)
         win.set_child(box)
 
         def do_import(w):
-            selected_types = [t for t, cb in checks.items() if cb.get_active()]
+            selected = [t for t, cb in checks.items() if cb.get_active()]
             win.close()
             if path.endswith(".json"):
-                self._import_json(path, selected_types)
+                self._import_json(path, selected)
             else:
-                self._import_txt(path, selected_types)
+                self._import_txt(path, selected)
 
         btn_import.connect("clicked", do_import)
-        btn_skip.connect("clicked", lambda w: (win.close(), self._import_json(path, []) if path.endswith(".json") else self._import_txt(path, [])))
+        btn_skip.connect("clicked", lambda w: (
+            win.close(),
+            self._import_json(path, []) if path.endswith(".json") else self._import_txt(path, [])
+        ))
         win.present()
 
     def _assign_types(self, category, payloads, types):
@@ -607,7 +739,7 @@ class PayloadWindow(Gtk.ApplicationWindow):
             if self.current_category:
                 self.load_payloads()
             self.status.set_text(
-                f"Imported {total} payload(s) across {len(data)} category/categories from {os.path.basename(path)}"
+                f"Imported {total} payload(s) across {len(data)} categories from {os.path.basename(path)}"
             )
             return
 
@@ -620,15 +752,18 @@ class PayloadWindow(Gtk.ApplicationWindow):
             self._show_error("Select a category before exporting.")
             return
         dlg = Gtk.Window(transient_for=self, modal=True, title="Export format")
-        dlg.set_default_size(260, 120)
+        dlg.set_default_size(280, 130)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_start(16); box.set_margin_end(16)
         box.set_margin_top(16);   box.set_margin_bottom(16)
         lbl = Gtk.Label(label="Choose export format:", xalign=0)
         btns = Gtk.Box(spacing=8, homogeneous=True)
         btn_txt  = Gtk.Button(label="Text (.txt)")
+        btn_txt.add_css_class("btn-export")
         btn_json = Gtk.Button(label="JSON (.json)")
+        btn_json.add_css_class("btn-export")
         btn_all  = Gtk.Button(label="All categories (.json)")
+        btn_all.add_css_class("btn-import")
         btns.append(btn_txt); btns.append(btn_json)
         box.append(lbl); box.append(btns); box.append(btn_all)
         dlg.set_child(box)
