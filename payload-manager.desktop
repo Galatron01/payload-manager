@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Payload Manager
 Comment=Pentest payload picker
-Exec=/home/redfive/.local/bin/payload-manager
+Exec=__HOME__/.local/bin/payload-manager
 Icon=security-high
 Terminal=false
 Type=Application

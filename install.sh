@@ -8,9 +8,10 @@ mkdir -p ~/.local/bin
 cp payload-manager.py ~/.local/bin/payload-manager
 chmod +x ~/.local/bin/payload-manager
 
-# Copy desktop entry
+# Copy desktop entry (substitute real home path)
 mkdir -p ~/.local/share/applications
-cp payload-manager.desktop ~/.local/share/applications/payload-manager.desktop
+sed "s|__HOME__|$HOME|g" payload-manager.desktop \
+    > ~/.local/share/applications/payload-manager.desktop
 
 # Create payloads directory
 mkdir -p ~/payloads
