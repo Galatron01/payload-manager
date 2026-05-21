@@ -2,7 +2,7 @@
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib
-import os, subprocess
+import os, subprocess, json
 
 PAYLOADS_DIR = os.path.expanduser("~/payloads")
 os.makedirs(PAYLOADS_DIR, exist_ok=True)
@@ -88,7 +88,10 @@ class PayloadWindow(Gtk.ApplicationWindow):
         add_btn.connect("clicked", self.on_add_payload)
         del_btn = Gtk.Button(label="Delete selected")
         del_btn.connect("clicked", self.on_delete_payload)
-        add_box.append(self.payload_entry); add_box.append(add_btn); add_box.append(del_btn)
+        imp_btn = Gtk.Button(label="Import file…")
+        imp_btn.connect("clicked", self.on_import_file)
+        add_box.append(self.payload_entry); add_box.append(add_btn)
+        add_box.append(del_btn); add_box.append(imp_btn)
         right.append(add_box)
 
         self.status = Gtk.Label(label="Click a payload to copy to clipboard", xalign=0)
@@ -223,6 +226,128 @@ class PayloadWindow(Gtk.ApplicationWindow):
         if not query:
             return True
         return query in row.payload.lower()
+
+    # ── Import ───────────────────────────────────────────────────
+
+    def on_import_file(self, btn):
+        dialog = Gtk.FileChooserDialog(
+            title="Import payloads from file",
+            transient_for=self,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                           "_Import", Gtk.ResponseType.ACCEPT)
+
+        f_txt = Gtk.FileFilter()
+        f_txt.set_name("Text files (*.txt)")
+        f_txt.add_pattern("*.txt")
+
+        f_json = Gtk.FileFilter()
+        f_json.set_name("JSON files (*.json)")
+        f_json.add_pattern("*.json")
+
+        f_all = Gtk.FileFilter()
+        f_all.set_name("Text & JSON files")
+        f_all.add_pattern("*.txt")
+        f_all.add_pattern("*.json")
+
+        dialog.add_filter(f_all)
+        dialog.add_filter(f_txt)
+        dialog.add_filter(f_json)
+
+        dialog.connect("response", self._on_import_response)
+        dialog.present()
+
+    def _on_import_response(self, dialog, response):
+        if response != Gtk.ResponseType.ACCEPT:
+            dialog.destroy()
+            return
+
+        path = dialog.get_file().get_path()
+        dialog.destroy()
+
+        if path.endswith(".json"):
+            self._import_json(path)
+        else:
+            self._import_txt(path)
+
+    def _import_txt(self, path):
+        if not self.current_category:
+            self._show_error("Select a category before importing a text file.")
+            return
+        with open(path) as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if not lines:
+            self.status.set_text("Import: file was empty.")
+            return
+        for line in lines:
+            self.add_payload_row(line)
+        self.save_payloads()
+        self.status.set_text(f"Imported {len(lines)} payload(s) from {os.path.basename(path)}")
+
+    def _import_json(self, path):
+        with open(path) as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError as e:
+                self._show_error(f"Invalid JSON: {e}")
+                return
+
+        # List of strings → import into current category
+        if isinstance(data, list):
+            if not self.current_category:
+                self._show_error("Select a category before importing a JSON array.")
+                return
+            items = [str(x) for x in data if str(x).strip()]
+            for item in items:
+                self.add_payload_row(item)
+            self.save_payloads()
+            self.status.set_text(f"Imported {len(items)} payload(s) from {os.path.basename(path)}")
+            return
+
+        # Dict → keys become categories, values are lists or newline-separated strings
+        if isinstance(data, dict):
+            total = 0
+            for cat_name, payloads in data.items():
+                cat_name = str(cat_name).strip()
+                if not cat_name:
+                    continue
+                if isinstance(payloads, list):
+                    lines = [str(p).strip() for p in payloads if str(p).strip()]
+                elif isinstance(payloads, str):
+                    lines = [l.strip() for l in payloads.splitlines() if l.strip()]
+                else:
+                    lines = [str(payloads).strip()] if str(payloads).strip() else []
+
+                cat_path = os.path.join(PAYLOADS_DIR, f"{cat_name}.txt")
+                existing = []
+                if os.path.exists(cat_path):
+                    with open(cat_path) as cf:
+                        existing = [l.strip() for l in cf if l.strip()]
+                with open(cat_path, "w") as cf:
+                    cf.write("\n".join(existing + lines) + "\n")
+                total += len(lines)
+
+            self.load_categories()
+            if self.current_category:
+                self.load_payloads()
+            self.status.set_text(
+                f"Imported {total} payload(s) across {len(data)} category/categories from {os.path.basename(path)}"
+            )
+            return
+
+        self._show_error("JSON must be an array of strings or an object mapping category names to arrays.")
+
+    def _show_error(self, msg):
+        dlg = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=msg,
+        )
+        dlg.connect("response", lambda d, _: d.destroy())
+        dlg.present()
 
 
 class PayloadApp(Gtk.Application):
