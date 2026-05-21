@@ -259,14 +259,16 @@ class PayloadWindow(Gtk.ApplicationWindow):
 
     def _on_chip_clicked(self, btn, type_name):
         if not btn.get_active():
-            # Don't allow deselecting — always keep one active
             btn.set_active(True)
             return
         self.current_testtype = type_name
-        # Deactivate all others
         for k, b in self._tt_buttons.items():
             if k != type_name:
                 b.set_active(False)
+        # Always show cross-category view — deselect any active category
+        if type_name is not None:
+            self.current_category = None
+            self.cat_list.unselect_all()
         self.load_payloads()
 
     def on_manage_testtypes(self, btn):
