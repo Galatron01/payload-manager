@@ -387,15 +387,32 @@ class PayloadWindow(Gtk.ApplicationWindow):
         self.payload_list.append(row)
 
     def _save_category_to_disk(self, category):
-        path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
+        # In single-category view the list holds ALL rows for this category (GTK hides
+        # filtered rows but keeps them in the list), so we can safely reconstruct.
         payloads = []
         i = 0
         while row := self.payload_list.get_row_at_index(i):
             if getattr(row, "source_category", None) == category:
                 payloads.append(row.payload)
             i += 1
+        path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
         with open(path, "w") as f:
             f.write("\n".join(payloads) + "\n")
+
+    def _delete_payload_from_file(self, category, payload_text):
+        # Used in cross-category view where the list only shows tagged payloads —
+        # read the file directly and remove one occurrence to avoid data loss.
+        path = os.path.join(PAYLOADS_DIR, f"{category}.txt")
+        if not os.path.exists(path):
+            return
+        with open(path) as f:
+            lines = [l.strip() for l in f if l.strip()]
+        try:
+            lines.remove(payload_text)
+        except ValueError:
+            pass
+        with open(path, "w") as f:
+            f.write("\n".join(lines) + "\n")
 
     def save_payloads(self):
         if self.current_category:
@@ -425,11 +442,17 @@ class PayloadWindow(Gtk.ApplicationWindow):
 
     def on_delete_payload(self, btn):
         row = self.payload_list.get_selected_row()
-        if row:
-            cat = getattr(row, "source_category", self.current_category)
-            self.payload_list.remove(row)
-            if cat:
-                self._save_category_to_disk(cat)
+        if not row:
+            return
+        cat = getattr(row, "source_category", self.current_category)
+        payload_text = row.payload
+        self.payload_list.remove(row)
+        if not cat:
+            return
+        if self.current_category == cat:
+            self._save_category_to_disk(cat)
+        else:
+            self._delete_payload_from_file(cat, payload_text)
 
     def on_search(self, entry):
         self.payload_list.invalidate_filter()
