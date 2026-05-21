@@ -591,9 +591,8 @@ class PayloadWindow(Gtk.ApplicationWindow):
         query = self.search.get_text().lower()
         if query and query not in row.payload.lower():
             return False
-        if self.current_testtype and self.current_category:
-            cat = getattr(row, "source_category", self.current_category)
-            return self.current_testtype in self._payload_testtypes(cat, row.payload)
+        # When a category is selected show everything in it — type chips are
+        # only for cross-category browsing (no category selected).
         return True
 
     # ── Import ────────────────────────────────────────────────────
