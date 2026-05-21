@@ -90,8 +90,10 @@ class PayloadWindow(Gtk.ApplicationWindow):
         del_btn.connect("clicked", self.on_delete_payload)
         imp_btn = Gtk.Button(label="Import file…")
         imp_btn.connect("clicked", self.on_import_file)
+        exp_btn = Gtk.Button(label="Export…")
+        exp_btn.connect("clicked", self.on_export_file)
         add_box.append(self.payload_entry); add_box.append(add_btn)
-        add_box.append(del_btn); add_box.append(imp_btn)
+        add_box.append(del_btn); add_box.append(imp_btn); add_box.append(exp_btn)
         right.append(add_box)
 
         self.status = Gtk.Label(label="Click a payload to copy to clipboard", xalign=0)
@@ -337,6 +339,107 @@ class PayloadWindow(Gtk.ApplicationWindow):
             return
 
         self._show_error("JSON must be an array of strings or an object mapping category names to arrays.")
+
+    # ── Export ───────────────────────────────────────────────────
+
+    def on_export_file(self, btn):
+        if not self.current_category:
+            self._show_error("Select a category before exporting.")
+            return
+
+        # Format picker dialog
+        dlg = Gtk.Window(transient_for=self, modal=True, title="Export format")
+        dlg.set_default_size(260, 120)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(16); box.set_margin_end(16)
+        box.set_margin_top(16);   box.set_margin_bottom(16)
+        lbl = Gtk.Label(label="Choose export format:", xalign=0)
+        btns = Gtk.Box(spacing=8, homogeneous=True)
+        btn_txt  = Gtk.Button(label="Text (.txt)")
+        btn_json = Gtk.Button(label="JSON (.json)")
+        btn_all  = Gtk.Button(label="All categories (.json)")
+        btns.append(btn_txt); btns.append(btn_json)
+        box.append(lbl); box.append(btns); box.append(btn_all)
+        dlg.set_child(box)
+
+        def pick(fmt):
+            dlg.close()
+            self._open_save_dialog(fmt)
+
+        btn_txt.connect("clicked",  lambda _: pick("txt"))
+        btn_json.connect("clicked", lambda _: pick("json"))
+        btn_all.connect("clicked",  lambda _: pick("json_all"))
+        dlg.present()
+
+    def _open_save_dialog(self, fmt):
+        titles = {"txt": "Export as text", "json": "Export as JSON", "json_all": "Export all categories as JSON"}
+        dialog = Gtk.FileChooserDialog(
+            title=titles[fmt],
+            transient_for=self,
+            action=Gtk.FileChooserAction.SAVE,
+        )
+        dialog.set_current_name(
+            f"{self.current_category}.txt" if fmt == "txt"
+            else ("payloads.json" if fmt == "json_all" else f"{self.current_category}.json")
+        )
+        dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                           "_Save",   Gtk.ResponseType.ACCEPT)
+
+        ff = Gtk.FileFilter()
+        if fmt == "txt":
+            ff.set_name("Text files (*.txt)"); ff.add_pattern("*.txt")
+        else:
+            ff.set_name("JSON files (*.json)"); ff.add_pattern("*.json")
+        dialog.add_filter(ff)
+
+        dialog.connect("response", self._on_export_response, fmt)
+        dialog.present()
+
+    def _on_export_response(self, dialog, response, fmt):
+        if response != Gtk.ResponseType.ACCEPT:
+            dialog.destroy()
+            return
+        path = dialog.get_file().get_path()
+        dialog.destroy()
+
+        if fmt == "txt":
+            self._export_txt(path)
+        elif fmt == "json":
+            self._export_json(path)
+        else:
+            self._export_json_all(path)
+
+    def _export_txt(self, path):
+        payloads = self._current_payloads()
+        with open(path, "w") as f:
+            f.write("\n".join(payloads) + "\n")
+        self.status.set_text(f"Exported {len(payloads)} payload(s) to {os.path.basename(path)}")
+
+    def _export_json(self, path):
+        payloads = self._current_payloads()
+        with open(path, "w") as f:
+            json.dump(payloads, f, indent=2)
+        self.status.set_text(f"Exported {len(payloads)} payload(s) to {os.path.basename(path)}")
+
+    def _export_json_all(self, path):
+        data = {}
+        for fname in sorted(os.listdir(PAYLOADS_DIR)):
+            if fname.endswith(".txt"):
+                cat = fname[:-4]
+                with open(os.path.join(PAYLOADS_DIR, fname)) as f:
+                    data[cat] = [l.strip() for l in f if l.strip()]
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        total = sum(len(v) for v in data.values())
+        self.status.set_text(f"Exported {total} payload(s) across {len(data)} categories to {os.path.basename(path)}")
+
+    def _current_payloads(self):
+        payloads = []
+        i = 0
+        while row := self.payload_list.get_row_at_index(i):
+            payloads.append(row.payload)
+            i += 1
+        return payloads
 
     def _show_error(self, msg):
         dlg = Gtk.MessageDialog(
