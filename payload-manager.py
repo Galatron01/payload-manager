@@ -477,7 +477,7 @@ class PayloadWindow(Gtk.ApplicationWindow):
             action=Gtk.FileChooserAction.OPEN,
         )
         dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
-                           "_Import", Gtk.ResponseType.ACCEPT)
+                           "_Next", Gtk.ResponseType.ACCEPT)
 
         f_all = Gtk.FileFilter()
         f_all.set_name("Text & JSON files")
@@ -501,12 +501,50 @@ class PayloadWindow(Gtk.ApplicationWindow):
             return
         path = dialog.get_file().get_path()
         dialog.destroy()
-        if path.endswith(".json"):
-            self._import_json(path)
-        else:
-            self._import_txt(path)
+        self._show_testtype_picker(path)
 
-    def _import_txt(self, path):
+    def _show_testtype_picker(self, path):
+        win = Gtk.Window(transient_for=self, modal=True, title="Assign test types")
+        win.set_default_size(320, 200)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_start(14); box.set_margin_end(14)
+        box.set_margin_top(14);   box.set_margin_bottom(14)
+
+        lbl = Gtk.Label(label="Assign imported payloads to test types\n(optional — can be changed later):", xalign=0)
+        lbl.set_wrap(True)
+        box.append(lbl)
+
+        checks = {}
+        for t in self.tt_data["types"]:
+            cb = Gtk.CheckButton(label=t)
+            box.append(cb)
+            checks[t] = cb
+
+        btn_row = Gtk.Box(spacing=8, homogeneous=True)
+        btn_skip   = Gtk.Button(label="Skip")
+        btn_import = Gtk.Button(label="Import")
+        btn_row.append(btn_skip); btn_row.append(btn_import)
+        box.append(btn_row)
+        win.set_child(box)
+
+        def do_import(w):
+            selected_types = [t for t, cb in checks.items() if cb.get_active()]
+            win.close()
+            if path.endswith(".json"):
+                self._import_json(path, selected_types)
+            else:
+                self._import_txt(path, selected_types)
+
+        btn_import.connect("clicked", do_import)
+        btn_skip.connect("clicked", lambda w: (win.close(), self._import_json(path, []) if path.endswith(".json") else self._import_txt(path, [])))
+        win.present()
+
+    def _assign_types(self, category, payloads, types):
+        for payload in payloads:
+            for t in types:
+                self._set_payload_testtype(category, payload, t, True)
+
+    def _import_txt(self, path, assign_types):
         if not self.current_category:
             self._show_error("Select a category before importing a text file.")
             return
@@ -518,9 +556,11 @@ class PayloadWindow(Gtk.ApplicationWindow):
         for line in lines:
             self._add_payload_row(line, self.current_category)
         self.save_payloads()
+        if assign_types:
+            self._assign_types(self.current_category, lines, assign_types)
         self.status.set_text(f"Imported {len(lines)} payload(s) from {os.path.basename(path)}")
 
-    def _import_json(self, path):
+    def _import_json(self, path, assign_types):
         with open(path) as f:
             try:
                 data = json.load(f)
@@ -536,6 +576,8 @@ class PayloadWindow(Gtk.ApplicationWindow):
             for item in items:
                 self._add_payload_row(item, self.current_category)
             self.save_payloads()
+            if assign_types:
+                self._assign_types(self.current_category, items, assign_types)
             self.status.set_text(f"Imported {len(items)} payload(s) from {os.path.basename(path)}")
             return
 
@@ -558,6 +600,8 @@ class PayloadWindow(Gtk.ApplicationWindow):
                         existing = [l.strip() for l in cf if l.strip()]
                 with open(cat_path, "w") as cf:
                     cf.write("\n".join(existing + lines) + "\n")
+                if assign_types:
+                    self._assign_types(cat_name, lines, assign_types)
                 total += len(lines)
             self.load_categories()
             if self.current_category:
