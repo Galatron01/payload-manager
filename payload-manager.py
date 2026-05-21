@@ -480,7 +480,17 @@ class PayloadWindow(Gtk.ApplicationWindow):
             self.cat_title.set_text(self.current_testtype)
 
         else:
-            self.cat_title.set_text("Select a category")
+            # "All" with no category — show every payload from every category
+            for fname in sorted(os.listdir(PAYLOADS_DIR)):
+                if not fname.endswith(".txt"):
+                    continue
+                cat = fname[:-4]
+                with open(os.path.join(PAYLOADS_DIR, fname)) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            self._add_payload_row(line, cat, show_category=True)
+            self.cat_title.set_text("All Payloads")
 
         self.payload_list.invalidate_filter()
 
