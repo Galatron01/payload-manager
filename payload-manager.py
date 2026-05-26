@@ -640,6 +640,16 @@ class PayloadWindow(Gtk.ApplicationWindow):
             return
         path = dialog.get_file().get_path()
         dialog.destroy()
+        # JSON dicts carry their own category info — import directly, no picker needed
+        if path.endswith(".json"):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self._import_json(path, [])
+                    return
+            except Exception:
+                pass
         self._show_testtype_picker(path)
 
     def _show_testtype_picker(self, path):
@@ -725,8 +735,12 @@ class PayloadWindow(Gtk.ApplicationWindow):
             return
 
         if isinstance(data, dict):
+            testtypes_map = data.get("_testtypes", {})
             total = 0
+            cat_count = 0
             for cat_name, payloads in data.items():
+                if str(cat_name).startswith("_"):
+                    continue
                 cat_name = str(cat_name).strip()
                 if not cat_name:
                     continue
@@ -746,11 +760,21 @@ class PayloadWindow(Gtk.ApplicationWindow):
                 if assign_types:
                     self._assign_types(cat_name, lines, assign_types)
                 total += len(lines)
+                cat_count += 1
+            if testtypes_map:
+                all_types_in_file = set(t for types in testtypes_map.values() for t in types)
+                new_types = [t for t in sorted(all_types_in_file) if t not in self.tt_data["types"]]
+                if new_types:
+                    self.tt_data["types"].extend(new_types)
+                    self._build_chip_bar()
+                    self._rebuild_tag_bar()
+                self.tt_data["assignments"].update(testtypes_map)
+                self._save_tt_data()
             self.load_categories()
             if self.current_category:
                 self.load_payloads()
             self.status.set_text(
-                f"Imported {total} payload(s) across {len(data)} categories from {os.path.basename(path)}"
+                f"Imported {total} payload(s) across {cat_count} categories from {os.path.basename(path)}"
             )
             return
 
@@ -829,9 +853,19 @@ class PayloadWindow(Gtk.ApplicationWindow):
         self.status.set_text(f"Exported {len(payloads)} payload(s) to {os.path.basename(path)}")
 
     def _export_json(self, path):
+        cat = self.current_category
         payloads = self._current_payloads()
+        assignments = {
+            self._tt_key(cat, p): types
+            for p in payloads
+            for types in [self._payload_testtypes(cat, p)]
+            if types
+        }
+        data = {cat: payloads}
+        if assignments:
+            data["_testtypes"] = assignments
         with open(path, "w") as f:
-            json.dump(payloads, f, indent=2)
+            json.dump(data, f, indent=2)
         self.status.set_text(f"Exported {len(payloads)} payload(s) to {os.path.basename(path)}")
 
     def _export_json_all(self, path):
@@ -841,11 +875,14 @@ class PayloadWindow(Gtk.ApplicationWindow):
                 cat = fname[:-4]
                 with open(os.path.join(PAYLOADS_DIR, fname)) as f:
                     data[cat] = [l.strip() for l in f if l.strip()]
+        if self.tt_data["assignments"]:
+            data["_testtypes"] = dict(self.tt_data["assignments"])
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
-        total = sum(len(v) for v in data.values())
+        cat_count = len([k for k in data if not k.startswith("_")])
+        total = sum(len(v) for k, v in data.items() if not k.startswith("_"))
         self.status.set_text(
-            f"Exported {total} payload(s) across {len(data)} categories to {os.path.basename(path)}"
+            f"Exported {total} payload(s) across {cat_count} categories to {os.path.basename(path)}"
         )
 
     def _current_payloads(self):
